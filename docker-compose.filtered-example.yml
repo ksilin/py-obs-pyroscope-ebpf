@@ -1,0 +1,72 @@
+# Example: Filtered Profiling Using Labels
+#
+# This example shows how to profile ONLY specific containers using the
+# filtered Alloy configuration (alloy-config-filtered.alloy)
+#
+# To use this setup:
+# 1. Copy this file: cp docker-compose.filtered-example.yml docker-compose.override.yml
+# 2. Update the alloy service to use filtered config (see below)
+# 3. Run: docker compose up -d
+#
+# Only containers with "profiling.enabled=true" will be profiled.
+
+version: '3.8'
+
+services:
+  # ================================================================
+  # Infrastructure Services - NOT PROFILED
+  # ================================================================
+
+  kafka:
+    # No profiling.enabled label = will NOT be profiled
+    # Saves CPU overhead and reduces noise in Pyroscope
+    labels:
+      - "profiling.enabled=false"  # Explicit opt-out (optional)
+
+  schema-registry:
+    # Also not profiled
+    labels:
+      - "profiling.enabled=false"
+
+  pyroscope:
+    # Not profiled (it's the profiling backend)
+    labels:
+      - "profiling.enabled=false"
+
+  # ================================================================
+  # Application Services - PROFILED
+  # ================================================================
+
+  demo-app:
+    labels:
+      - "profiling.enabled=true"      # ← Enable profiling for this container
+      - "service_name=demo-app"       # ← Optional: Custom service name (will appear as /demo-app)
+
+  # Example: Additional Python worker (if you had one)
+  # worker:
+  #   build: .
+  #   command: ["python", "worker.py"]
+  #   labels:
+  #     - "profiling.enabled=true"
+  #     - "service_name=worker"
+
+  # Example: Python API server (if you had one)
+  # api:
+  #   build: .
+  #   command: ["python", "api.py"]
+  #   labels:
+  #     - "profiling.enabled=true"
+  #     - "service_name=api-server"
+
+  # ================================================================
+  # Alloy - Update to use filtered configuration
+  # ================================================================
+
+  alloy:
+    volumes:
+      # Replace default config with filtered version
+      - ./alloy-config-filtered.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+# Result: Only demo-app (and any other labeled services) will appear in Pyroscope
+# Infrastructure services (Kafka, Schema Registry) will not be profiled

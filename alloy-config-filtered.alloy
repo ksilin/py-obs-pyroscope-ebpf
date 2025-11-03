@@ -1,0 +1,73 @@
+// Grafana Alloy Configuration with Filtered Discovery
+// This example shows how to profile ONLY selected containers using labels
+//
+// To use this configuration:
+// 1. Add labels to containers you want to profile in docker-compose.yml:
+//      labels:
+//        - "profiling.enabled=true"
+// 2. Update docker-compose.yml to use this config:
+//      - ./alloy-config-filtered.alloy:/etc/alloy/config.alloy
+
+// Enable debug logging
+logging {
+  level  = "debug"
+  format = "logfmt"
+}
+
+// Discover Docker containers
+discovery.docker "local_containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Filter: Only profile containers with profiling.enabled=true label
+discovery.relabel "profiling_enabled" {
+  targets = discovery.docker.local_containers.targets
+
+  // Keep only containers with profiling.enabled=true
+  rule {
+    source_labels = ["__meta_docker_container_label_profiling_enabled"]
+    regex         = "true"
+    action        = "keep"
+  }
+
+  // Optional: Use custom service name from label if provided
+  rule {
+    source_labels = ["__meta_docker_container_label_service_name"]
+    target_label  = "service_name"
+    regex         = "(.+)"
+    replacement   = "/${1}"
+  }
+
+  // Fallback: Use container name if no custom service_name label
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "service_name"
+    regex         = "(.+)"
+    replacement   = "/${1}"
+  }
+}
+
+// Configure eBPF profiling for filtered containers
+pyroscope.ebpf "instance" {
+  forward_to = [pyroscope.write.pyroscope_server.receiver]
+
+  // Use filtered targets instead of all containers
+  targets = discovery.relabel.profiling_enabled.output
+
+  // Increase sample rate for better granularity (default: 19 Hz, SDK uses 100 Hz)
+  // 97 Hz provides more detailed flamegraphs while remaining production-safe
+  sample_rate = 97
+}
+
+// Write profiles to Pyroscope server
+pyroscope.write "pyroscope_server" {
+  endpoint {
+    url = "http://pyroscope:4040"
+  }
+
+  external_labels = {
+    environment = "demo",
+    cluster     = "py-flamegraph",
+    profiler    = "alloy-ebpf",
+  }
+}

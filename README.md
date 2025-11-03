@@ -136,6 +136,83 @@ open http://localhost:4140
 - Kafka serialization (JSON vs Avro)
 - Python runtime overhead
 
+---
+
+## Multi-Application Profiling
+
+### What Gets Profiled?
+
+**Important**: Alloy's current configuration profiles **ALL containers** on the Docker host, not just the demo app.
+
+**You'll see multiple services in Pyroscope:**
+
+```
+Service List in Pyroscope UI:
+├── /py-flamegraph-demo-app        ← Python (your demo application)
+├── /py-flamegraph-kafka           ← Java (Kafka broker)
+├── /py-flamegraph-schema-registry ← Java (Schema Registry)
+├── /py-flamegraph-pyroscope       ← Go (Pyroscope itself)
+└── /py-flamegraph-alloy           ← Go (Alloy profiler)
+```
+
+**Why?** The Alloy configuration uses auto-discovery without filtering:
+
+```alloy
+discovery.docker "local_containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+pyroscope.ebpf "instance" {
+  targets = discovery.docker.local_containers.targets  // ← All containers
+}
+```
+
+**Supported languages**: Python, Java (JVM), Go, Ruby, Node.js, PHP, Perl
+
+**Cross-stack discovery**: Alloy discovers containers from **all Docker Compose stacks** on the same Docker host (not limited to this project's network).
+
+---
+
+### Filtering: Profile Only Selected Applications
+
+For production or to reduce overhead, profile only specific containers using labels.
+
+**Step 1**: Add labels to containers you want to profile (`docker-compose.yml`):
+
+```yaml
+services:
+  demo-app:
+    labels:
+      - "profiling.enabled=true"     # Enable profiling
+      - "service_name=demo-app"      # Custom name (optional)
+
+  kafka:
+    # No label = not profiled
+```
+
+**Step 2**: Use filtered Alloy configuration:
+
+```bash
+# Switch to filtered config
+cp alloy-config-filtered.alloy alloy-config.alloy
+
+# Or update docker-compose.yml:
+volumes:
+  - ./alloy-config-filtered.alloy:/etc/alloy/config.alloy:ro
+```
+
+**Step 3**: Restart Alloy:
+
+```bash
+docker compose restart alloy
+```
+
+**Result**: Only `demo-app` will be profiled, reducing CPU overhead and Pyroscope storage.
+
+**See**: `alloy-config-filtered.alloy` and `docker-compose.filtered-example.yml` for complete examples.
+
+---
+
 ## Demo Scenarios
 
 ### 1. Serialization Comparison (`--scenario serdes`)
