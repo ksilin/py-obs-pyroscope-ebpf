@@ -1,0 +1,43 @@
+// Grafana Alloy Configuration for eBPF Profiling
+// Discovers and profiles all containers on the Docker host
+
+// Enable debug logging
+logging {
+  level  = "debug"
+  format = "logfmt"
+}
+
+// Discover Docker containers
+discovery.docker "local_containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Configure eBPF profiling for discovered containers
+pyroscope.ebpf "instance" {
+  forward_to = [pyroscope.write.pyroscope_server.receiver]
+
+  // Direct targets from Docker discovery (no relabeling)
+  targets = discovery.docker.local_containers.targets
+
+  // Increase sample rate for better granularity (default: 19 Hz, SDK uses 100 Hz)
+  // 97 Hz provides more detailed flamegraphs while remaining production-safe
+  sample_rate = 97
+}
+
+// Write profiles to Pyroscope server
+pyroscope.write "pyroscope_server" {
+  endpoint {
+    url = "http://pyroscope:4040"
+
+    // Add custom headers if needed
+    // headers = {
+    //   "X-Custom-Header" = "value"
+    // }
+  }
+
+  external_labels = {
+    environment = "demo",
+    cluster     = "py-flamegraph",
+    profiler    = "alloy-ebpf",
+  }
+}

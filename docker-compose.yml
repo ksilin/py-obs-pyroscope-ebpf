@@ -1,0 +1,125 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:8.1.0
+    hostname: kafka
+    container_name: py-flamegraph-kafka
+    ports:
+      - "9192:9192"
+      - "9201:9201"
+    environment:
+      # KRaft mode configuration
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29193'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+
+      # Listeners
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka:19192,PLAINTEXT_HOST://0.0.0.0:9192,CONTROLLER://kafka:29193'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:19192,PLAINTEXT_HOST://localhost:9192'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+
+      # Clustering
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+
+      # Topic defaults
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+      # JMX
+      KAFKA_JMX_PORT: 9201
+      KAFKA_JMX_HOSTNAME: localhost
+
+      # Log directories
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+    networks:
+      - py-flamegraph
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9192 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.1.0
+    hostname: schema-registry
+    container_name: py-flamegraph-schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8181:8181"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:19192'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8181
+      SCHEMA_REGISTRY_DEBUG: 'true'
+    networks:
+      - py-flamegraph
+    restart: on-failure
+
+  pyroscope:
+    image: grafana/pyroscope:1.14.1
+    hostname: pyroscope
+    container_name: py-flamegraph-pyroscope
+    ports:
+      - "4140:4040"
+    command:
+      - "server"
+    environment:
+      - PYROSCOPE_LOG_LEVEL=info
+    networks:
+      - py-flamegraph
+
+  alloy:
+    image: grafana/alloy:v1.11.3
+    hostname: alloy
+    container_name: py-flamegraph-alloy
+    depends_on:
+      pyroscope:
+        condition: service_started
+    ports:
+      - "12345:12345"  # Alloy HTTP server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./alloy-config.alloy:/etc/alloy/config.alloy:ro
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    privileged: true
+    pid: "host"
+    networks:
+      - py-flamegraph
+    restart: on-failure
+
+  demo-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: demo-app
+    container_name: py-flamegraph-demo-app
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_started
+      pyroscope:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19192
+      SCHEMA_REGISTRY_URL: http://schema-registry:8181
+      PYROSCOPE_SERVER_URL: http://pyroscope:4040
+      PYROSCOPE_APP_NAME: python-kafka-profiling-demo
+    command: python continuous_demo.py --messages 500 --iterations 100 --sleep 5
+    networks:
+      - py-flamegraph
+    restart: on-failure
+
+networks:
+  py-flamegraph:
+    driver: bridge
